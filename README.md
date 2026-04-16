@@ -1,211 +1,208 @@
-# A股股票关系建模 (Stock Relation Modeling for China A-Shares)
+# Stock Relation Modeling for China A-Shares
 
-捕捉A股市场沪深300成分股之间的相关关系，通过11轮迭代实验从静态相关到自适应动态网络，系统性地探索最优建模方法。
+Capturing and modeling dynamic correlation relationships between HS300 constituent stocks through 8 rounds of iterative experiments, evolving from static Pearson correlation to DualPath Weighted-TopK networks.
 
-## 核心成果
+## Core Results
 
-| 实验 | 方法 | NMI(vs 行业) | Cov Error | Sharpe |
-|:----:|------|:-----------:|:---------:|:------:|
-| Exp1 | 静态 Pearson TopK=5 | 0.672 | 0.425 | — |
-| Exp2 | LedoitWolf 滚动窗口 w=250 | 0.550 | 0.729 | — |
-| Exp2 | EWMA 指数加权 hl=126 | 0.589 | 0.738 | — |
-| Exp3 | Granger 因果网络 (50只) | 0.600 | — | — |
-| Exp4 | GLasso 偏相关 TopK=5 | 0.673 | 0.742 | — |
-| Exp5 | 多信号融合 + 最小方差组合 | 0.674 | — | 0.780 |
-| Exp6 | Adaptive EWMA hl=126, pw=0.1 | 0.702 | 0.708 | — |
-| Exp7 | 网格搜索 hl=252, pw=0.3, nc=10 | 0.748 | 0.723 | — |
-| Exp8 | 聚类数扩展 nc=42, pw=0.5 | 0.880 | — | — |
-| Exp9 | 极端先验 pw=1.0, nc=42 | 0.889 | 0.850 | — |
-| **Exp10** | **最优: pw=0.7, nc=35, TopK=4** | **0.8995** | **0.781** | **0.806** |
+### Table 1: Performance Ranking (by CompositeScore)
 
-最终模型通过 EWMA 动态协方差估计 + 行业先验正则化，在行业结构发现（NMI）上达到 **0.8995**，比基准方法(0.7478)提升 **20.3%**，投资组合 Sharpe 达 **0.806**。
+All results evaluated under **V2 Walk-Forward** protocol (no data leakage, strictly out-of-sample).
 
-## 环境要求
+| Rank | Method | NMI | ARI | Sharpe | Sortino | MaxDD | Composite |
+|:----:|--------|:---:|:---:|:------:|:-------:|:-----:|:---------:|
+| 1 | **DP_RMT_cp0.8_WK5** | **0.956** | **0.807** | 0.979 | 1.250 | 0.116 | **0.856** |
+| 2 | DP_RMT_cp0.7_WK5 | 0.943 | 0.756 | 0.979 | 1.250 | 0.116 | 0.830 |
+| 3 | DP_RMT_cp0.6_WK4 | 0.930 | 0.725 | 0.979 | 1.250 | 0.116 | 0.815 |
+| 4 | DP_RMT_cp0.6_WK5 | 0.934 | 0.733 | 0.979 | 1.250 | 0.116 | 0.814 |
+| 5 | **DP_Factor_k10_WK5** | 0.932 | 0.713 | **1.023** | **1.303** | **0.113** | 0.797 |
+| 6 | Ensemble_RMT_POET15_WK5 | 0.929 | 0.693 | 0.976 | 1.242 | 0.115 | 0.797 |
+| 7 | DP_Factor_cp0.6_WK5 | 0.928 | 0.693 | 1.003 | 1.279 | 0.115 | 0.773 |
+| 8 | DP_POET15_cp0.6_WK5 | 0.925 | 0.666 | 0.975 | 1.246 | 0.114 | 0.769 |
+
+### Table 2: Diversity Showcase (by Specialty)
+
+| Category | Method | NMI | Sharpe | MaxDD | Strength |
+|----------|--------|:---:|:------:|:-----:|----------|
+| Overall Best | DP_RMT_cp0.8_WK5 | **0.956** | 0.979 | 0.116 | Highest Composite, NMI, ARI |
+| Finance Best | DP_Factor_k10_WK5 | 0.932 | **1.023** | **0.113** | Highest Sharpe/Sortino/Calmar |
+| Robust Pick | DP_RMT_cp0.6_WK4 | 0.930 | 0.979 | 0.116 | Highest IC (0.857), stable |
+| Risk Control | DP_POET15_cp0.6_WK5 | 0.925 | 0.975 | **0.114** | Lowest MaxDD, highest LogLik |
+| Ensemble | Ensemble_RMT_POET15_WK5 | 0.929 | 0.976 | 0.115 | Highest RankIC (0.575) |
+| Cluster Expert | RMT+Prior_pw0.5 | 0.911 | 0.842 | 0.179 | Best single-path NMI |
+| Legacy Best | DP_RMT_cp0.6_K3 | 0.899 | 0.979 | 0.116 | Best binary TopK |
+
+The champion model **DP_RMT_cp0.8_WK5** achieves **NMI=0.956** with **Sharpe=0.979**, representing a **+6.3%** NMI improvement over the previous best (0.899) with no Sharpe degradation.
+
+## Key Technical Breakthrough: Weighted TopK
+
+The single most impactful improvement across all iterations was replacing binary TopK adjacency (0/1) with **weighted TopK** (using |correlation| as edge weights):
+
+| Dimension | Binary TopK (old) | Weighted TopK (new) | Improvement |
+|-----------|:-----------------:|:-------------------:|:-----------:|
+| NMI (best) | 0.899 | **0.956** | +6.3% |
+| ARI (best) | 0.637 | **0.807** | +26.7% |
+| cp sensitivity | None | Very significant | — |
+| Optimal K | 3 | 5 | — |
+| Sharpe | 0.979 | 0.979 | Unchanged |
+
+**Why it works**: Weighted adjacency preserves the gradient of correlation strength. Spectral clustering gains information about "how strongly" two stocks are connected, not just "whether" they are connected. Combined with high prior weight (cp=0.8), same-industry edges get much higher weights than cross-industry ones, producing clearer community structure.
+
+## Architecture: DualPath
+
+```
+Input: Historical returns [0, t)
+  │
+  ├─ Base estimator (RMT / Factor / POET)
+  │    → denoised correlation matrix + covariance matrix
+  │
+  ├─ Clustering Path:
+  │    corr_cluster = (1-cp) × denoised_corr + cp × industry_prior
+  │    → Weighted TopK → Spectral Clustering → NMI evaluation
+  │
+  └─ Portfolio Path:
+       cov_portfolio = denoised_cov (NO prior injection)
+       → Min-Variance Optimization → Sharpe evaluation
+```
+
+Key insight: Clustering needs **amplified** industry differences (inject prior), while portfolio optimization needs **clean** covariance (pure denoising). Using different matrices for different tasks breaks the NMI-Sharpe tradeoff.
+
+## Improvement Progression
+
+| Stage | NMI | Sharpe | Key Change |
+|-------|:---:|:------:|------------|
+| Exp1: Static Pearson | 0.668 | — | Baseline |
+| Exp6-7: EWMA + Prior | 0.748 | 0.806 | Industry prior regularization |
+| Exp8-10: Parameter opt | 0.900 | 0.806 | nc=35, pw=0.7, TopK=4 |
+| Iter3: DualPath binary | 0.899 | 0.979 | Separate cluster/portfolio paths |
+| **Iter7-8: DualPath weighted** | **0.956** | **0.979** | **Weighted TopK adjacency** |
+
+## Environment
 
 - Python 3.10+
-- 仅需 CPU（无 GPU 依赖）
+- CPU only (no GPU required)
 
-### 依赖安装
+### Install Dependencies
 
 ```bash
-# 创建 conda 环境（推荐）
 conda create -n stock-relation python=3.10 -y
 conda activate stock-relation
-
-# 安装依赖
 pip install -r requirements.txt
 ```
 
-## 快速开始
+## Quick Start
 
-### 1. 下载数据
-
-从 baostock 下载沪深300成分股 2020-2025 年日线数据（约需20分钟）：
+### 1. Download Data
 
 ```bash
 python download_baostock.py
 ```
 
-输出文件说明：
-- `data/*.csv` — 每只股票的原始日线数据
-- `data/close_prices_valid.csv` — 合并后的收盘价矩阵（271只 x 1455天）
-- `data/returns.csv` — 日收益率矩阵
-- `data/industry_info.csv` — 行业分类信息
+Output files:
+- `data/*.csv` — Individual stock daily data
+- `data/close_prices_valid.csv` — Combined close prices (271 stocks x 1455 days)
+- `data/returns.csv` — Daily returns matrix
+- `data/industry_info.csv` — Industry classification
 
-### 2. 数据预处理
+### 2. Preprocess Data
 
 ```bash
 python preprocess.py
 ```
 
-- 填充缺失值、裁剪极端收益率（>20%）
-- 输出 `data/returns_clean.csv` 和 `data/close_prices_clean.csv`
-- 输出 EDA 统计到 `results/eda_summary.json`
-
-### 3. 运行实验
-
-按顺序运行 10 个实验，每个约 1-10 分钟（CPU）：
+### 3. Run Experiments
 
 ```bash
-# 实验1: 静态Pearson相关性网络
-python exp1_pearson.py
+# Phase 1: Basic methods
+python exp1_pearson.py    # Static Pearson correlation network
+python exp2_dynamic.py    # Dynamic correlation (rolling window + LedoitWolf + EWMA)
+python exp3_granger.py    # Granger causality network
+python exp4_glasso.py     # Graphical Lasso sparse inverse covariance
+python exp5_ensemble.py   # Multi-signal fusion + portfolio validation
+python exp6_adaptive.py   # Adaptive dynamic network + industry prior
+python exp7_optimize.py   # Parameter grid search + method comparison
 
-# 实验2: 动态相关性（滚动窗口 + LedoitWolf + EWMA）
-python exp2_dynamic.py
-
-# 实验3: Granger因果网络（50只代表性股票）
-python exp3_granger.py
-
-# 实验4: Graphical Lasso 稀疏逆协方差 + 偏相关
-python exp4_glasso.py
-
-# 实验5: 多信号融合 + 投资组合验证
-python exp5_ensemble.py
-
-# 实验6: 自适应动态网络 + 行业先验正则化
-python exp6_adaptive.py
-
-# 实验7: 参数网格搜索 + 全方法对比
-python exp7_optimize.py
-
-# 实验8: 聚类数与先验权重扩展
+# Phase 2: Parameter optimization
 python exp8_improvements.py
-
-# 实验9: 极端参数探索
 python exp9_extreme.py
-
-# 实验10: 精细调参与最终验证
 python exp10_validation.py
+
+# Phase 3: DualPath + Weighted TopK (current best)
+python round1_cp_adj.py           # cp optimization + adjacency method exploration
+python round2_weighted_ensemble.py # Weighted TopK full optimization
+python eval_final_v3.py           # Final comprehensive evaluation (V2 Walk-Forward)
 ```
 
-### 4. 一键运行全部
-
-```bash
-bash run_all.sh
-```
-
-## 项目结构
+## Project Structure
 
 ```
 stock-relation/
-├── README.md                  # 本文件
-├── requirements.txt           # Python 依赖
-├── run_all.sh                 # 一键运行脚本
-├── experiment.md              # 详细实验记录（含所有数值结果）
-├── exp11_final_summary.md     # 最终总结
-│
-├── download_baostock.py       # 数据下载（baostock API）
-├── preprocess.py              # 数据预处理 + EDA
-│
-├── exp1_pearson.py            # 实验1: 静态Pearson + 阈值/TopK网络
-├── exp2_dynamic.py            # 实验2: 滚动窗口/LW/EWMA动态协方差
-├── exp3_granger.py            # 实验3: Granger因果网络
-├── exp4_glasso.py             # 实验4: Graphical Lasso偏相关网络
-├── exp5_ensemble.py           # 实验5: 多信号融合 + 下游任务验证
-├── exp6_adaptive.py           # 实验6: 自适应EWMA + 行业先验
-├── exp7_optimize.py           # 实验7: 参数优化 + 最终对比
-├── exp8_improvements.py       # 实验8: 聚类数与先验权重扩展
-├── exp9_extreme.py            # 实验9: 极端参数探索
-├── exp10_validation.py        # 实验10: 精细调参与最终验证
-│
-├── data/                      # 数据目录（运行download后生成）
-│   ├── *.csv                  # 个股日线数据
-│   ├── close_prices_valid.csv # 合并收盘价
-│   ├── returns_clean.csv      # 清洗后收益率
-│   └── industry_info.csv      # 行业分类
-│
-└── results/                   # 实验结果
-    ├── eda_summary.json       # EDA统计
-    ├── exp1/ ~ exp10/         # 各实验结果
-    └── stock_statistics.csv   # 股票统计特征
+├── README.md, requirements.txt, run_all.sh
+├── download_baostock.py, preprocess.py
+├── exp1_pearson.py ~ exp7_optimize.py      # Phase 1: basic methods
+├── exp8_improvements.py ~ exp10_validation.py  # Phase 2: parameter opt
+├── round1_cp_adj.py, round2_weighted_ensemble.py  # Phase 3: DualPath + WeightedTopK
+├── eval_framework_v2.py                    # V2 Walk-Forward evaluation framework
+├── eval_final_v3.py                        # Final comprehensive evaluation
+├── experiment.md                           # Phase 1-2 experiment log (Chinese)
+├── iteration_log.md                        # Full iteration log (Chinese)
+├── data/
+└── results/
+    ├── exp1/ ~ exp10/                      # Phase 1-2 results
+    ├── round1/, round2/                    # Phase 3 results
+    ├── eval_final/                         # V2 eval (26 strategies)
+    └── eval_final_v3/                      # V3 eval (23 strategies, final)
 ```
 
-## 方法详解
+## Archived Methods
 
-### 实验1: 静态Pearson相关性
-计算全样本收益率相关矩阵，比较阈值法和 TopK 稀疏化。**发现 TopK=5（每只保留5个最强关系）效果最佳**。
+The following methods are superseded and kept for reference only:
 
-### 实验2: 动态协方差估计
-比较滚动窗口 Pearson、Ledoit-Wolf 收缩、EWMA 指数加权。**Ledoit-Wolf 在协方差预测上最稳健**。
+| Method | NMI | Sharpe | Why Archived |
+|--------|:---:|:------:|--------------|
+| SamplePearson | 0.766 | 0.969 | No denoising, no prior |
+| LedoitWolf | 0.769 | 0.962 | Marginal improvement over sample |
+| RMT_Denoise | 0.722 | 0.979 | Good Sharpe but low NMI |
+| POET15 (standalone) | 0.765 | 0.975 | Superseded by DualPath+POET15 |
+| PCA_Factor_k20 (standalone) | 0.740 | 1.003 | Superseded by DualPath+Factor |
+| NonlinearShrinkage | 0.771 | 0.971 | No clear advantage |
+| Adaptive_EWMA_pw0.7 | 0.899 | 0.802 | NMI=Sharpe tradeoff, superseded |
+| RMT+Prior_pw0.3 | 0.884 | 0.817 | Sharpe too low |
+| GLasso_Partial | 0.568 | 0.710 | Poor at scale (271 stocks) |
+| EqualWeight | — | 0.682 | Naive baseline |
 
-### 实验3: Granger因果
-对50只代表性股票两两 Granger 检验（lag=5），构建有向因果网络。**因果邻居的预测 R²=0.265，远超自回归基准**。发现因果关系主要是跨行业的。
+## Evaluation Metrics
 
-### 实验4: Graphical Lasso
-通过 L1 正则化精度矩阵估计偏相关网络。偏相关去除间接关系后，**用更少的边（814 vs 982）达到更高的 NMI（0.673 vs 0.672）**。
+| Metric | Description | Direction |
+|--------|-------------|:---------:|
+| **NMI** | Normalized Mutual Information: clustering vs true industry (0~1) | Higher |
+| **ARI** | Adjusted Rand Index: clustering agreement | Higher |
+| **Modularity** | Network community structure quality | Higher |
+| **IC** | Industry Consistency: proportion of same-industry edges | Higher |
+| **CovError** | Relative Frobenius error of covariance prediction | Lower |
+| **LogLik** | Log-likelihood of out-of-sample returns | Higher |
+| **RankIC** | Spearman rank correlation of covariance elements | Higher |
+| **Sharpe** | Annualized risk-adjusted return | Higher |
+| **Sortino** | Downside risk-adjusted return | Higher |
+| **MaxDD** | Maximum drawdown | Lower |
+| **Calmar** | Return / MaxDD ratio | Higher |
+| **CompositeScore** | Weighted average (NMI 25%, Sharpe 15%, ARI 10%, ...) | Higher |
 
-### 实验5: 融合与下游验证
-融合 Pearson + 偏相关 + 滞后互相关。**最小方差投资组合 Sharpe=0.78，显著优于等权的0.69**。
+## Key Findings
 
-### 实验6-7: 自适应 + 行业先验（第一阶段最终方案）
-核心创新：将行业分类作为先验信息注入 EWMA 协方差估计。网格搜索发现最优参数：**半衰期252天 + 行业先验权重0.30，NMI=0.748**。
+1. **Weighted TopK is transformational**: Preserving correlation values as edge weights (vs binary 0/1) boosts NMI by 6.3% with no Sharpe cost
+2. **DualPath separation principle**: Clustering needs prior amplification; portfolio needs clean denoising — different matrices for different tasks
+3. **Industry structure is A-share's strongest signal**: Prior weight cp=0.8 is optimal for weighted adjacency
+4. **RMT denoising is the best base**: Marchenko-Pastur threshold cleanly separates signal from noise
+5. **Factor k=10 maximizes Sharpe**: Fewer factors = stronger regularization = more stable portfolio
+6. **A-share relationships are structurally persistent**: Long-term correlations dominate short-term noise
+7. **Cluster count ~35 matches effective industry structure** (fewer than raw 42 categories)
 
-### 实验8-11: 参数优化迭代（第二阶段）
-通过分析发现原有方案存在以下问题并进行针对性改进：
-1. **聚类数不匹配**：固定10个聚类，但实际有42个行业
-2. **先验权重不足**：仅用0.3的行业先验，没有充分利用行业结构信息
-3. **TopK不优**：每个节点保留5个邻居，可能太密或太稀
+## Data Source
 
-关键改进效果：
-
-| 阶段 | NMI | 提升 | 关键改进 |
-|------|:---:|:---:|----------|
-| 基准 (exp7) | 0.7478 | — | hl=252, pw=0.3, nc=10 |
-| Exp8 | 0.8801 | +17.7% | nc=10→42, pw→0.5 |
-| Exp9 | 0.8889 | +18.9% | pw→1.0 |
-| **Exp10** | **0.8995** | **+20.3%** | pw=0.7, nc=35, TopK=4 |
-
-**最优参数组合**：
-- 半衰期 (half_life): 252 (约1年)
-- 先验权重 (prior_weight): 0.7 (70%行业先验)
-- 聚类数 (n_clusters): 35
-- TopK: 4
-
-## 关键发现
-
-1. **行业结构是A股关系的最强信号**：行业先验正则化使 NMI 从 0.58 提升到 0.90（+55%）
-2. **A股关系变化缓慢**：最优半衰期约1年，说明关系结构具有持续性
-3. **偏相关优于全相关**：去除间接关系噪声后效果更好
-4. **Granger因果提供互补信息**：捕捉的是跨行业领先-滞后关系，而非同行业共变
-5. **聚类数应匹配真实类别数**：从10调整到35是关键改进之一
-6. **适度的先验权重(0.7)优于极端值**：优于纯数据(0)或纯先验(1.0)
-7. **更稀疏的网络(TopK=4)能更好捕捉核心结构**
-
-## 评估指标说明
-
-| 指标 | 含义 |
-|------|------|
-| **NMI** | 归一化互信息，衡量网络聚类与真实行业分类的吻合度（0~1，越高越好） |
-| **IC** | 网络中同行业连边占比 |
-| **Cov Error** | 协方差矩阵预测的相对 Frobenius 误差（越低越好） |
-| **Sharpe** | 基于协方差的最小方差组合年化风险调整收益 |
-
-## 数据来源
-
-- 行情数据：[baostock](http://baostock.com)（免费，无需注册，支持前复权）
-- 行业分类：baostock `query_stock_industry` 接口
-- 时间范围：2020-01-01 ~ 2025-12-31
-- 样本：沪深300成分股（最新一期，共300只，有效271只）
+- Market data: [baostock](http://baostock.com) (free, no registration needed)
+- Industry classification: baostock `query_stock_industry` API
+- Time range: 2020-01-01 ~ 2025-12-31
+- Sample: HS300 constituents (300 stocks, 271 valid after filtering)
 
 ## License
 

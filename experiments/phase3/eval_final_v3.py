@@ -12,7 +12,10 @@
     6. Ensemble_RMT_POET15_WK5 (集成)
 """
 import sys
-sys.path.insert(0, '/inspire/hdd/project/global-event-perception-and-prediction/liaojianhan-CZXS24220039/stock-relation')
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(PROJECT_ROOT))
 
 import pandas as pd
 import numpy as np
@@ -28,10 +31,10 @@ from sklearn.cluster import SpectralClustering
 from sklearn.covariance import LedoitWolf, GraphicalLassoCV
 import json, os, time
 import warnings
-warnings.filterwarnings('ignore')
+warnings.filterwarnings('default')
 
-DATA_DIR = "/inspire/hdd/project/global-event-perception-and-prediction/liaojianhan-CZXS24220039/stock-relation/data"
-OUT_DIR = "/inspire/hdd/project/global-event-perception-and-prediction/liaojianhan-CZXS24220039/stock-relation/results/eval_final_v3"
+DATA_DIR = PROJECT_ROOT / "data"
+OUT_DIR = PROJECT_ROOT / "results" / "eval_final_v3"
 os.makedirs(OUT_DIR, exist_ok=True)
 
 returns_df = pd.read_csv(f'{DATA_DIR}/returns_clean.csv', index_col=0, parse_dates=True)
@@ -160,6 +163,7 @@ def make_dual_path_fn(base_fn, prior, cp=0.6, pp=0.0):
         else:
             cov_o = cov_b
         return corr_c, cov_o
+    fn.uses_industry_prior = bool(cp > 0)
     return fn
 
 def make_prior_fn(base_fn, prior, pw):
@@ -171,6 +175,7 @@ def make_prior_fn(base_fn, prior, pw):
         co = (1 - pw) * cov_b + pw * pc
         co = ensure_psd(co)
         return cov_to_corr(co), co
+    fn.uses_industry_prior = bool(pw > 0)
     return fn
 
 def make_ensemble_dp_fn(base_fns, prior, cp=0.6):
@@ -184,6 +189,7 @@ def make_ensemble_dp_fn(base_fns, prior, cp=0.6):
         np.fill_diagonal(corr_c, 1)
         cov_avg = ensure_psd(np.mean(covs, axis=0))
         return corr_c, cov_avg
+    fn.uses_industry_prior = bool(cp > 0)
     return fn
 
 # ============================================================
@@ -268,6 +274,26 @@ class FlexibleEvaluator:
         return results
 
 
+# Use the validated library evaluator for final numbers. The local class
+# above is retained only as a record of the previous protocol.
+from src.evaluation import FlexibleEvaluator as _ValidatedFlexibleEvaluator
+FlexibleEvaluator = _ValidatedFlexibleEvaluator
+from src.estimators import (
+    rmt_denoise as _validated_rmt_denoise,
+    pca_factor as _validated_pca_factor,
+    poet as _validated_poet,
+    nonlinear_shrinkage as _validated_nonlinear_shrinkage,
+)
+from src.network import weighted_topk_adj as _validated_weighted_topk_adj
+# Keep the historical implementations above for provenance, but make every
+# experiment below use the validated public estimators.
+rmt_denoise_fn = _validated_rmt_denoise
+pca_factor_fn = _validated_pca_factor
+poet_fn = _validated_poet
+nonlinear_shrinkage_fn = _validated_nonlinear_shrinkage
+weighted_topk_adj = _validated_weighted_topk_adj
+
+
 # ============================================================
 # 评估所有方法
 # ============================================================
@@ -319,7 +345,9 @@ run(ev_k4, "NonlinearShrinkage", nonlinear_shrinkage_fn)
 print("\n=== C. 单路径+先验 ===")
 run(ev_k4, "RMT+Prior_pw0.3", make_prior_fn(rmt_denoise_fn, industry_prior, 0.3))
 run(ev_k4, "RMT+Prior_pw0.5", make_prior_fn(rmt_denoise_fn, industry_prior, 0.5))
-run(ev_k4, "Adaptive_EWMA_pw0.7", lambda h: adaptive_ewma_fn(h, 252, 0.7))
+adaptive_ewma_eval = lambda h: adaptive_ewma_fn(h, 252, 0.7)
+adaptive_ewma_eval.uses_industry_prior = True
+run(ev_k4, "Adaptive_EWMA_pw0.7", adaptive_ewma_eval)
 
 # === D. DualPath 二值TopK (旧方法) ===
 print("\n=== D. DualPath 二值TopK ===")

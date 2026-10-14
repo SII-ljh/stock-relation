@@ -3,6 +3,9 @@
 # 用法: bash run_all.sh
 set -e
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
 echo "=== 沪深300成分股关联关系建模 ==="
 echo ""
 
@@ -14,14 +17,14 @@ if ! command -v python &> /dev/null; then
 fi
 
 # 检查依赖
-python -c "import numpy, pandas, sklearn, scipy, networkx" 2>/dev/null || {
+python -c "import numpy, pandas, sklearn, scipy, networkx, baostock, tqdm" 2>/dev/null || {
     echo "缺少依赖, 正在安装..."
-    pip install -r requirements.txt
+    python -m pip install -r requirements.txt
 }
 
 # Step 1: 下载数据
 echo "[1/3] 下载沪深300成分股数据..."
-if [ -f "data/returns_clean.csv" ]; then
+if [ -f "data/returns_clean.csv" ] && [ -f "data/industry_info.csv" ] && [ -f "data/data_manifest.json" ]; then
     echo "  数据已存在, 跳过下载"
 else
     python -c "

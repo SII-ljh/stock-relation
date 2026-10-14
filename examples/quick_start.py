@@ -19,7 +19,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 
 import numpy as np
-from src.data import download_data, load_data, build_industry_prior
+from src.data import download_data, load_data, build_industry_prior, normalize_industry
 from src.estimators import rmt_denoise
 from src.network import weighted_topk_adj
 from src.dualpath import make_dual_path_estimator
@@ -38,7 +38,8 @@ def main():
     print("Step 1: 数据准备")
     print("=" * 60)
 
-    if not os.path.exists(os.path.join(DATA_DIR, 'returns_clean.csv')):
+    required_data = ('returns_clean.csv', 'industry_info.csv', 'data_manifest.json')
+    if not all(os.path.exists(os.path.join(DATA_DIR, name)) for name in required_data):
         print("首次运行, 正在下载沪深300数据 (约5分钟)...")
         download_data(data_dir=DATA_DIR)
     else:
@@ -48,7 +49,8 @@ def main():
     ret_vals = returns_df.values
     industry_prior = build_industry_prior(stocks, code_to_industry)
 
-    n_industries = len(set(code_to_industry.values()))
+    n_industries = len({normalize_industry(v) for v in code_to_industry.values()
+                        if normalize_industry(v) is not None})
     date_start = returns_df.index[0].strftime('%Y-%m-%d')
     date_end = returns_df.index[-1].strftime('%Y-%m-%d')
 
@@ -95,7 +97,7 @@ def main():
 
     nmi = eval_nmi(adj, stocks, code_to_industry, n_clusters=35)
     ari = eval_ari(adj, stocks, code_to_industry, n_clusters=35)
-    print(f"  NMI (聚类与真实行业匹配度): {nmi:.4f}")
+    print(f"  NMI (先验辅助的全样本诊断): {nmi:.4f}")
     print(f"  ARI (调整兰德指数):          {ari:.4f}")
 
     # 展示每个聚类的行业组成
@@ -142,9 +144,10 @@ def main():
     print("=" * 60)
     print("""
   本项目的核心价值:
-  从沪深300成分股的历史收益率中, 自动发现股票之间的真实关联关系。
-  模型输出的聚类结果与真实行业分类高度吻合 (NMI=0.956),
-  同时生成的最小方差组合具有优秀的风险调整收益 (Sharpe=0.979)。
+  从沪深300成分股的历史收益率中, 生成关联网络和组合权重。
+  上述聚类分数是使用当前数据和行业先验得到的全样本诊断，
+  不能替代点时成分股、冻结参数下的样本外评估。
+  组合指标同样需要在独立的 walk-forward 区间中重新计算。
 
   技术原理:
   1. RMT去噪   — 去除收益率相关矩阵中的随机噪声

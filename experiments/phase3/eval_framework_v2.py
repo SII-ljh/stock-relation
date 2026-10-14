@@ -349,5 +349,48 @@ def compute_composite_score(df):
 
 if __name__ == '__main__':
     print("评估框架 V2 (Walk-Forward)")
-    print("修复: 所有方法统一使用 walk-forward, 无数据泄露")
+    print("所有方法统一使用 walk-forward；参数冻结和点时标签需由调用方保证")
     print("接口: estimator_fn(returns_history) -> (corr, cov)")
+
+
+# Compatibility exports.  The original experiment copy is kept above for
+# provenance, while callers now use the validated implementation in src/.
+from src.data import build_industry_prior
+from src.evaluation import (
+    FlexibleEvaluator as _ValidatedFlexibleEvaluator,
+    eval_nmi, eval_ari, eval_modularity, eval_ic, eval_cov_error,
+    eval_log_likelihood, eval_rank_ic, compute_composite_score,
+    format_results_table as _format_results_table,
+    _get_true_labels,
+)
+from src.network import topk_adj
+from src.portfolio import min_var_weights, eval_portfolio_metrics
+from src.utils import cov_to_corr, ensure_psd
+
+
+class WalkForwardEvaluator(_ValidatedFlexibleEvaluator):
+    """Backward-compatible wrapper around :class:`src.evaluation.FlexibleEvaluator`."""
+
+    def __init__(self, returns, stocks, code_to_industry, industry_prior,
+                 warmup=500, eval_freq=60, forecast=60, rebalance=60,
+                 n_clusters=35, topk=4, max_weight=0.05):
+        super().__init__(
+            returns, stocks, code_to_industry, industry_prior,
+            warmup=warmup, eval_freq=eval_freq, forecast=forecast,
+            rebalance=rebalance, n_clusters=n_clusters,
+            adj_fn=lambda corr: topk_adj(corr, k=topk),
+            max_weight=max_weight,
+        )
+
+
+def _get_labels(stocks, code_to_industry):
+    labels = _get_true_labels(stocks, code_to_industry)
+    known = sorted({value for value in labels if value >= 0})
+    return labels, {value: value for value in known}
+
+
+def format_results_table(results_list, sort_by='NMI', ascending=False):
+    table = _format_results_table(results_list, sort_by=None)
+    if sort_by in table.columns:
+        table = table.sort_values(sort_by, ascending=ascending).reset_index(drop=True)
+    return table

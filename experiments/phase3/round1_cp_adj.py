@@ -6,7 +6,10 @@ Round 1: cp优化 + 加权邻接矩阵 + 互选KNN
   3. 测试互选KNN (两个节点互相选中才连边)
 """
 import sys
-sys.path.insert(0, '/inspire/hdd/project/global-event-perception-and-prediction/liaojianhan-CZXS24220039/stock-relation')
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(PROJECT_ROOT))
 
 import pandas as pd
 import numpy as np
@@ -20,10 +23,10 @@ from sklearn.metrics import normalized_mutual_info_score, adjusted_rand_score
 from sklearn.cluster import SpectralClustering
 import json, os, time
 import warnings
-warnings.filterwarnings('ignore')
+warnings.filterwarnings('default')
 
-DATA_DIR = "/inspire/hdd/project/global-event-perception-and-prediction/liaojianhan-CZXS24220039/stock-relation/data"
-OUT_DIR = "/inspire/hdd/project/global-event-perception-and-prediction/liaojianhan-CZXS24220039/stock-relation/results/round1"
+DATA_DIR = PROJECT_ROOT / "data"
+OUT_DIR = PROJECT_ROOT / "results" / "round1"
 os.makedirs(OUT_DIR, exist_ok=True)
 
 returns_df = pd.read_csv(f'{DATA_DIR}/returns_clean.csv', index_col=0, parse_dates=True)
@@ -185,6 +188,20 @@ class FlexibleEvaluator:
         return results
 
 
+# Use the validated library evaluator for final numbers. The local class
+# above is retained only as a record of the previous protocol.
+from src.evaluation import FlexibleEvaluator as _ValidatedFlexibleEvaluator
+FlexibleEvaluator = _ValidatedFlexibleEvaluator
+from src.estimators import (
+    rmt_denoise as _validated_rmt_denoise,
+    pca_factor as _validated_pca_factor,
+)
+from src.network import weighted_topk_adj as _validated_weighted_topk_adj
+rmt_denoise_fn = _validated_rmt_denoise
+pca_factor_fn = _validated_pca_factor
+weighted_topk_adj = _validated_weighted_topk_adj
+
+
 # ============================================================
 # DualPath生成器
 # ============================================================
@@ -195,6 +212,7 @@ def make_dual_path_fn(base_fn, prior, cp=0.6, pp=0.0):
         corr_c = (1 - cp) * corr_b + cp * prior
         np.fill_diagonal(corr_c, 1)
         return corr_c, cov_b
+    fn.uses_industry_prior = bool(cp > 0)
     return fn
 
 

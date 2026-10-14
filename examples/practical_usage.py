@@ -85,7 +85,9 @@ def scenario_2():
     print("场景2: 组合回测 (模型组合 vs 等权组合)")
     print("=" * 60)
 
-    returns_df, stocks, code_to_industry = load_data(DATA_DIR)
+    returns_df, stocks, code_to_industry = load_data(
+        DATA_DIR, require_point_in_time=True
+    )
     industry_prior = build_industry_prior(stocks, code_to_industry)
     ret_vals = returns_df.values
     n_stocks = len(stocks)
@@ -137,7 +139,9 @@ def scenario_3():
     print("场景3: 方法对比 (Walk-Forward 评估)")
     print("=" * 60)
 
-    returns_df, stocks, code_to_industry = load_data(DATA_DIR)
+    returns_df, stocks, code_to_industry = load_data(
+        DATA_DIR, require_point_in_time=True
+    )
     industry_prior = build_industry_prior(stocks, code_to_industry)
     ret_vals = returns_df.values
 
@@ -163,7 +167,8 @@ def scenario_3():
     for name, fn in methods.items():
         print(f"  评估中: {name}...", end=' ', flush=True)
         r = evaluator.evaluate(name, fn)
-        print(f"NMI={r['NMI']:.4f}, Sharpe={r['Sharpe']:.4f}")
+        nmi_note = "（标签辅助）" if r.get('NMI_Label_Assisted') else ""
+        print(f"NMI={r['NMI']:.4f}{nmi_note}, Sharpe={r['Sharpe']:.4f}")
         results.append(r)
 
     df = format_results_table(results)
@@ -180,6 +185,9 @@ def scenario_3():
 
 if __name__ == '__main__':
     scenario_1()
-    scenario_2()
+    try:
+        scenario_2()
+    except ValueError as exc:
+        print(f"\n跳过历史组合回测: {exc}")
     # 取消下面的注释可运行方法对比 (耗时较长)
     # scenario_3()

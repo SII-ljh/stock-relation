@@ -10,9 +10,28 @@ from sklearn.covariance import LedoitWolf as _LedoitWolf
 from src.utils import cov_to_corr, ensure_psd
 
 
+def _validate_history(history):
+    history = np.asarray(history, dtype=float)
+    if history.ndim != 2:
+        raise ValueError(f"history must be a 2-D array, got {history.shape}")
+    t, n = history.shape
+    if t < 2 or n < 1:
+        raise ValueError("history must contain at least 2 observations and 1 asset")
+    if not np.isfinite(history).all():
+        raise ValueError("history contains NaN or infinite values")
+    return history
+
+
+def _sample_covariance(history):
+    history = _validate_history(history)
+    # np.cov returns a scalar for a one-column input; keep the public contract
+    # as an NxN matrix for every N.
+    return np.atleast_2d(np.cov(history, rowvar=False, ddof=1)).astype(float)
+
+
 def sample_covariance(history):
     """样本协方差估计（最基础的方法）"""
-    cov = np.cov(history.T)
+    cov = _sample_covariance(history)
     return cov_to_corr(cov), cov
 
 
@@ -21,6 +40,7 @@ def ledoit_wolf(history):
 
     通过线性收缩降低样本协方差的估计误差。
     """
+    history = _validate_history(history)
     cov = _LedoitWolf().fit(history).covariance_
     return cov_to_corr(cov), cov
 
@@ -30,12 +50,13 @@ def rmt_denoise(history):
 
     利用 Marchenko-Pastur 分布确定噪声特征值上界，
     将低于阈值的特征值替换为均值，保留信号特征值。
-    这是本项目表现最好的基础估计器。
+    历史实验中这是本项目表现较好的基础估计器；新数据集需要重新验证。
     """
+    history = _validate_history(history)
     T, N = history.shape
     q = N / T
 
-    cov = np.cov(history.T)
+    cov = _sample_covariance(history)
     std = np.sqrt(np.diag(cov).copy())
     std[std < 1e-10] = 1e-10
     corr = cov / np.outer(std, std)
@@ -71,11 +92,17 @@ def pca_factor(history, n_factors=20):
         history: T x N 收益率矩阵
         n_factors: 因子数量（默认20，推荐10用于组合优化）
     """
-    cov_sample = np.cov(history.T)
+    history = _validate_history(history)
+    if not isinstance(n_factors, (int, np.integer)) or isinstance(n_factors, bool):
+        raise TypeError("n_factors must be an integer")
+    if n_factors < 1:
+        raise ValueError("n_factors must be positive")
+    cov_sample = _sample_covariance(history)
     eigvals, eigvecs = np.linalg.eigh(cov_sample)
     idx = np.argsort(eigvals)[::-1]
     eigvals, eigvecs = eigvals[idx], eigvecs[:, idx]
 
+    n_factors = min(int(n_factors), cov_sample.shape[0])
     B = eigvecs[:, :n_factors]
     factor_var = eigvals[:n_factors]
 
@@ -97,8 +124,16 @@ def poet(history, n_factors=15, threshold_const=0.5):
         n_factors: 因子数量
         threshold_const: 阈值常数
     """
+    history = _validate_history(history)
     T, N = history.shape
-    cov_sample = np.cov(history.T)
+    if not isinstance(n_factors, (int, np.integer)) or isinstance(n_factors, bool):
+        raise TypeError("n_factors must be an integer")
+    if n_factors < 1:
+        raise ValueError("n_factors must be positive")
+    if not np.isfinite(threshold_const) or threshold_const < 0:
+        raise ValueError("threshold_const must be finite and non-negative")
+    cov_sample = _sample_covariance(history)
+    n_factors = min(int(n_factors), N)
 
     eigvals, eigvecs = np.linalg.eigh(cov_sample)
     idx = np.argsort(eigvals)[::-1]
@@ -129,8 +164,9 @@ def nonlinear_shrinkage(history):
 
     对每个特征值施加不同的收缩系数（与特征值大小相关）。
     """
+    history = _validate_history(history)
     T, N = history.shape
-    cov_sample = np.cov(history.T)
+    cov_sample = _sample_covariance(history)
 
     eigvals, eigvecs = np.linalg.eigh(cov_sample)
     idx = np.argsort(eigvals)[::-1]
@@ -139,8 +175,10 @@ def nonlinear_shrinkage(history):
     shrunk = np.zeros_like(eigvals)
     for i in range(N):
         diffs = eigvals - eigvals[i]
-        diffs[i] = 1
-        h = max(eigvals[i] * (N / T) ** 0.5 * 0.1, 1e-8)
+        # The kernel is leave-one-out.  Replacing the self term by 1 adds an
+        # arbitrary contribution that depends on the units of the covariance.
+        diffs[i] = np.inf
+        h = max(abs(eigvals[i]) * (N / T) ** 0.5 * 0.1, 1e-8)
         kernel_val = np.sum(h / (diffs ** 2 + h ** 2)) / (N * np.pi)
         shrink_factor = 1.0 / (1 + (N / T) * kernel_val * np.pi * eigvals[i])
         shrunk[i] = eigvals[i] * max(shrink_factor, 0.01)
